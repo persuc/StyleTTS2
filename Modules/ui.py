@@ -5,6 +5,7 @@ from io import BytesIO
 from urllib.request import urlopen
 from zipfile import ZipFile
 import numpy as np
+import numpy.typing as npt
 from scipy.io import wavfile
 
 import typer
@@ -149,6 +150,7 @@ class SelectList(typing.Generic[_T]):
         return self.window
     
 def depend_zip(name: str, check_path: str, url: str, extract_path: str | None = None):
+    """ Check for a dependency, and download and extract it if it is missing """
     if not os.path.isfile(check_path):
         download_model = typer.confirm(f"ℹ️  It appears you are missing the {name}. Would you like to download it now?")
         manual_instructions = f"For manual installation, download the {name} from {url}, and extract it into {extract_path if extract_path else 'the project root'}."
@@ -175,6 +177,7 @@ def depend_zip(name: str, check_path: str, url: str, extract_path: str | None = 
         print(f"[green]{name} successfully downloaded and extracted.[/green]")
 
 def choose_reference() -> str | None:
+    """ Prompt user to choose a reference audio file. Searches config.REFERENCE_PATH. """
     # Ensure there is at least one reference speaker
     os.makedirs(os.path.dirname(REFERENCE_PATH), exist_ok=True)
     filenames = next(os.walk(REFERENCE_PATH), (None, None, []))[2]
@@ -198,10 +201,26 @@ def choose_reference() -> str | None:
     
     return application.run()
 
-def write_audio(audio, filename: str):
+def write_audio(audio: npt.NDArray[np.float64], filename: str):
+    """
+    Write an audio stream as a list of floats between -1 and 1 to .wav file
+    
+    :return: path to the file that was written
+    """
     # Convert to (little-endian) 16 bit integers.
     audio = np.int16(audio / np.max(np.abs(audio)) * 32767)
 
-    # write output
+    # create the output directory
     os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
-    wavfile.write(f"{OUTPUT_PATH}{filename}", SAMPLE_RATE, audio)
+
+    # pick a suitable filename
+    filepath = OUTPUT_PATH + filename
+    counter = 0
+    version = ""
+    while os.path.isfile(filepath + version + '.wav'):
+        counter += 1
+        version = f"_{counter:03d}"
+    filepath = f"{OUTPUT_PATH}{filename}{version}.wav"
+    wavfile.write(filepath, SAMPLE_RATE, audio)
+
+    return filepath

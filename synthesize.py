@@ -10,6 +10,7 @@ from Modules.ui import REFERENCE_PATH, choose_reference, depend_zip, write_audio
 
 random.seed(0)
 import numpy as np
+import numpy.typing as npt
 np.random.seed(0)
 import yaml
 import typer
@@ -125,7 +126,7 @@ def initialize():
         clamp=False
     )
 
-def inference(text, reference_style, alpha = 0.3, beta = 0.7, diffusion_steps=5, embedding_scale=1):
+def inference(text, reference_style, alpha = 0.3, beta = 0.7, diffusion_steps=5, embedding_scale=1) -> npt.NDArray:
     if model is None or sampler is None or model_params is None:
         raise RuntimeError("Expected model to be initialized before performing inference")
 
@@ -227,14 +228,17 @@ def main():
             text = prompt_toolkit.prompt('> ', key_bindings=bindings)
             if text is None:
                 state = State.CHOOSE_REFERENCE
+            elif len(text) > MODEL_SIZE:
+                print(f"[red]Sorry, StyleTTS2 is limited to {MODEL_SIZE} characters.[/red] Please shorten your input and try again.")
             else:
                 start = time.time()
                 audio = inference(text, compute_style(REFERENCE_PATH + typing.cast(str, reference_file)))
                 processing_time = time.time() - start
                 duration = len(audio) / SAMPLE_RATE
-                filename = re.sub(r'\W', '', text)[:20] + '.wav'
-                write_audio(audio, filename)
-                print(f"[green]Synthesized {filename}![/green] Wrote {duration:2f}s of data in {processing_time:2f}s")
+                filename = re.sub(r'\W', '', text)[:20]
+                filepath = write_audio(audio, filename)
+                print(f"[green]Synthesized {filepath}![/green]")
+                print(f"Wrote {duration:2f}s of data in {processing_time:2f}s")
 
 if __name__ == "__main__":
     typer.run(main)

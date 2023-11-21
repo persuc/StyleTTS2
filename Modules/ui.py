@@ -7,6 +7,8 @@ from zipfile import ZipFile
 import numpy as np
 import numpy.typing as npt
 from scipy.io import wavfile
+import pyaudio  
+import wave
 
 import typer
 from prompt_toolkit.formatted_text.utils import fragment_list_to_text
@@ -197,9 +199,13 @@ def choose_reference() -> str | None:
         key_bindings=load_key_bindings(),
     )
 
-    application.output.show_cursor = lambda:None
-    
-    return application.run()
+    # hackily hide the cursor by overwriting the show_cursor method
+    show_cursor = application.output.show_cursor
+    application.output.show_cursor = lambda: None
+    result = application.run()
+    # we have to restore it afterwards
+    application.output.show_cursor = show_cursor
+    return result
 
 def write_audio(audio: npt.NDArray[np.float64], filename: str):
     """
@@ -224,3 +230,25 @@ def write_audio(audio: npt.NDArray[np.float64], filename: str):
     wavfile.write(filepath, SAMPLE_RATE, audio)
 
     return filepath
+
+def play_audio(filepath: str):
+    if not os.path.isfile(filepath):
+        return False
+    
+    f = wave.open(filepath, "rb")
+    p = pyaudio.PyAudio()
+    chunk = 1024
+    stream = p.open(format = p.get_format_from_width(f.getsampwidth()),  
+                    channels = f.getnchannels(),  
+                    rate = f.getframerate(),  
+                    output = True)  
+    data = f.readframes(chunk)  
+    
+    while data:  
+        stream.write(data)  
+        data = f.readframes(chunk)  
+    
+    stream.stop_stream()
+    stream.close()  
+    p.terminate()
+    f.close()

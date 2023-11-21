@@ -6,7 +6,9 @@ pydub
 pyyaml
 librosa
 nltk
+phonemizer
 matplotlib
+scipy
 accelerate
 transformers
 einops
@@ -16,5 +18,7 @@ typing
 typing-extensions
 typer
 rich
-phonemizer
+prompt_toolkit
+pyaudio
+wave
 git+https://github.com/resemble-ai/monotonic_align.git

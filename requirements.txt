@@ -14,4 +14,7 @@ einops-exts
 tqdm
 typing
 typing-extensions
+typer
+rich
+phonemizer
 git+https://github.com/resemble-ai/monotonic_align.git

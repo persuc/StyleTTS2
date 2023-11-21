@@ -1,0 +1,15 @@
+# Virtual environment
+/env/
+
+# Trained model data
+/Models/
+
+# MacOS temp files
+**/.DS_Store
+
+# python cache files
+**/*.pyc
+
+# audio files
+/Data/reference_audio
+/Data/nltk

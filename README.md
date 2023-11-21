@@ -1,5 +1,36 @@
 # StyleTTS 2: Towards Human-Level Text-to-Speech through Style Diffusion and Adversarial Training with Large Speech Language Models
 
+## Customizations
+
+* CLI usage (built with Typer)
+* Output directly to wav files
+* Added .gitignore
+
+[synthesize.py](./synthesize.py) Is a command line wrapper for StyleTTS 2.
+
+## Building espeak-ng on MacOS (Apple Silicon)
+
+```
+git clone git@github.com:espeak-ng/pcaudiolib.git
+cd pcaudiolib-master
+sudo CC=gcc CXX=g++ ./configure --prefix=/opt
+make
+sudo make install
+
+ln -s /opt/lib/libpcaudio.dylib /usr/local/lib/libpcaudio.dylib
+ln -s /opt/include/pcaudiolib/audio.h /usr/local/include/pcaudiolib/audio.h
+
+cd ..
+git clone git@github.com:espeak-ng/espeak-ng.git
+cd espeak-ng-master
+CC=gcc CXX=g++ ./configure --prefix=/usr/local
+CC=gcc CXX=g++ LDFLAGS="-L/usr/local/lib" CXXFLAGS="-I/usr/local/include" LIBS="-lpcaudiolib" make
+sudo make install
+
+ln -s /opt/lib/libpcaudio.dylib /usr/local/lib/libpcaudio.0.dylib
+
+```
+
 ### Yinghao Aaron Li, Cong Han, Vinay S. Raghavan, Gavin Mischler, Nima Mesgarani
 
 > In this paper, we present StyleTTS 2, a text-to-speech (TTS) model that leverages style diffusion and adversarial training with large speech language models (SLMs) to achieve human-level TTS synthesis. StyleTTS 2 differs from its predecessor by modeling styles as a latent random variable through diffusion models to generate the most suitable style for the text without requiring reference speech, achieving efficient latent diffusion while benefiting from the diverse speech synthesis offered by diffusion models. Furthermore, we employ large pre-trained SLMs, such as WavLM, as discriminators with our novel differentiable duration modeling for end-to-end training, resulting in improved speech naturalness. StyleTTS 2 surpasses human recordings on the single-speaker LJSpeech dataset and matches it on the multispeaker VCTK dataset as judged by native English speakers. Moreover, when trained on the LibriTTS dataset, our model outperforms previous publicly available models for zero-shot speaker adaptation. This work achieves the first human-level TTS synthesis on both single and multispeaker datasets, showcasing the potential of style diffusion and adversarial training with large SLMs.
@@ -92,7 +123,7 @@ Please refer to [Inference_LJSpeech.ipynb](https://github.com/yl4579/StyleTTS2/b
 
   [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/yl4579/StyleTTS2/blob/main/Colab/StyleTTS2_Demo_LibriTTS.ipynb)
 
-***Before using these pre-trained models, you agree to inform the listeners that the speech samples are synthesized by the pre-trained models, unless you have the permission to use the voice you synthesize. That is, you agree to only use voices whose speakers grant the permission to have their voice cloned, either directly or by license before making synthesized voices public, or you have to publicly announce that these voices are synthesized if you do not have the permission to use these voices.*** 
+***Before using these pre-trained models, you agree to inform the listeners that the speech samples are synthesized by the pre-trained models, unless you have the permission to use the voice you synthesize. That is, you agree to only use voices whose speakers grant the permission to have their voice cloned, either directly or by license before making synthesized voices pubilc, or you have to publicly announce that these voices are synthesized if you do not have the permission to use these voices.*** 
 
 ### Common Issues
 - **High-pitched background noise**: This is caused by numerical float differences in older GPUs. For more details, please refer to issue [#13](https://github.com/yl4579/StyleTTS2/issues/13). Basically, you will need to use more modern GPUs or do inference on CPUs.

@@ -1,4 +1,7 @@
 import random
+import re
+import typing
+
 random.seed(0)
 import numpy as np
 np.random.seed(0)
@@ -6,11 +9,14 @@ import time
 import yaml
 from munch import Munch
 import os
+import typer
+import pytermgui as ptg
 from rich import print
 import gdown
 from io import BytesIO
 from urllib.request import urlopen
 from zipfile import ZipFile
+import asyncio
 
 import torch
 torch.manual_seed(0)
@@ -45,6 +51,8 @@ nltk.data.path = ["/Users/andrew/Documents/StyleTTS2/" + NLTK_DATA_PATH]
 TOKENIZERS_PATH = NLTK_DATA_PATH + 'tokenizers/'
 PUNKT_PATH = TOKENIZERS_PATH + 'punkt/PY3/english.pickle'
 PUNKT_URL = 'https://raw.githubusercontent.com/nltk/nltk_data/gh-pages/packages/tokenizers/punkt.zip'
+REFERENCE_PATH = 'Data/reference_audio/'
+OUTPUT_PATH = 'Output/'
 text_cleaner = TextCleaner()
 phonemizer = EspeakBackend(language='en-us', preserve_punctuation=True, with_stress=True, words_mismatch='ignore')
 config = None # initialized by initialize()
@@ -86,37 +94,21 @@ def compute_style(path: str) -> Tensor:
 def initialize():
 
     # load config
-    print('load model config')
     global config
     config = yaml.safe_load(open(MODEL_PATH + CONFIG_FILENAME))
-
-    print('load model params config')
     global model_params
     model_params = recursive_munch(config['model_params'])
 
     # initialize model
-
-    print('load pretrained models')
-    print('load text_aligner')
-    # load pretrained ASR model
-    print(config.get('ASR_path', False))
-    print(config.get('ASR_config', False))
     text_aligner = load_ASR_models(config.get('ASR_path', False), config.get('ASR_config', False))
-    print('load pitch_extractor')
-    # load pretrained F0 model
     pitch_extractor = load_F0_models(config.get('F0_path', False))
-    print('load BERT')
-    # load BERT model
     plbert = load_plbert(config.get('PLBERT_dir', False))
-    print('build model')
-    # build model
     global model
     model = build_model(model_params, text_aligner, pitch_extractor, plbert)
     _ = [model[key].eval() for key in model]
     _ = [model[key].to(DEVICE) for key in model]
 
     # load params
-    print('load params')
     params_whole = torch.load(MODEL_PATH + EPOCH_FILENAME, map_location='cpu')
     params = params_whole['net']
     for key in model:
@@ -136,7 +128,6 @@ def initialize():
     _ = [model[key].eval() for key in model]
 
     # initialize sampler
-    print('load sampler')
     global sampler
     sampler = DiffusionSampler(
         model.diffusion.diffusion,
@@ -211,27 +202,18 @@ def inference(text, reference_style, alpha = 0.3, beta = 0.7, diffusion_steps=5,
         
     return out.squeeze().cpu().numpy()[..., :-50] # weird pulse at the end of the model, need to be fixed later
 
-def synthesize(reference_path: str, output_path: str, text: str):
+def synthesize(reference_file: str, text: str, filename: str = ""):
+
     # start = time.time()
-    audio = inference(text, compute_style(reference_path))
+    audio = inference(text, compute_style(REFERENCE_PATH + reference_file))
     # rtf = (time.time() - start) / (len(wav) / SAMPLE_RATE)
     # print(f"RTF = {rtf:5f}")
     # Convert to (little-endian) 16 bit integers.
     audio = np.int16(audio / np.max(np.abs(audio)) * 32767)
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    wavfile.write(output_path, SAMPLE_RATE, audio)
-
-import typer
-
-# TODOs
-# Download and unzip punkt tokenizer from https://raw.githubusercontent.com/nltk/nltk_data/gh-pages/packages/tokenizers/punkt.zip
-# Download and unzip models from https://drive.google.com/uc?id=1jK_VV3TnGM9dkrIMsdQ_upov8FrIymr7
-# Choose voice (specifically, a reference_audio clip)
-# Paste a single line for tts
-# Paste multiple paragraphs and split on newlines to create multiple audio clips
-# Asynchronous processing: show progress of each job and still allow console interaction
-# Multiprocessing: process jobs in background processes
-# Add LJspeech support
+    os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
+    if not filename:
+        filename = re.sub(r'\W', '', text)[:20] + '.wav'
+    wavfile.write(f"{OUTPUT_PATH}{filename}", SAMPLE_RATE, audio)
 
 def depend_zip(name: str, check_path: str, url: str, extract_path: str | None = None):
     if not os.path.isfile(check_path):
@@ -239,7 +221,7 @@ def depend_zip(name: str, check_path: str, url: str, extract_path: str | None = 
         manual_instructions = f"For manual installation, download the {name} from {url}, and extract it into {extract_path if extract_path else 'the project root'}."
         if not download_model:
             print(manual_instructions)
-            raise typer.Abort()
+            raise typer.Exit()
         
         try:
             if url.startswith('https://drive.google.com'):
@@ -259,6 +241,176 @@ def depend_zip(name: str, check_path: str, url: str, extract_path: str | None = 
         
         print(f"[green]{name} successfully downloaded and extracted.[/green]")
 
+# def choose_reference(manager: ptg.WindowManager) -> asyncio.Future[str]:
+#     os.makedirs(os.path.dirname(REFERENCE_PATH), exist_ok=True)
+#     filenames = next(os.walk(REFERENCE_PATH), (None, None, []))[2]
+#     wavfiles = [f for f in filenames if f.endswith('.wav')]
+
+#     if not wavfiles:
+#         if wavfiles:
+#             print(f"Reference audio clips in {REFERENCE_PATH} must be .wav files")
+#             typer.Abort()
+#         else:
+#             print(f"You do not have any reference audio clips. Place a .wav file {REFERENCE_PATH} containing a ~3 second voice clip to use as a reference.")
+#             typer.Exit()
+
+#     future = asyncio.Future()
+
+#     def on_choose(value: str):
+#         if future.done:
+#             return
+#         manager.remove(window)
+#         future.set_result(value)
+#     window = ptg.Window(
+#             "[bold accent]This is my example",
+#             *[[f[:-4], lambda _: on_choose(f)] for f in wavfiles],
+#             is_noblur = True,
+#             is_noresize = True,
+#             is_static = True,
+#     )
+
+#     manager.add(window)
+
+#     return future
+
+from prompt_toolkit.widgets import RadioList, Label
+# from prompt_toolkit.widgets.base import _DialogList, _T
+from prompt_toolkit.formatted_text.utils import fragment_list_to_text
+from prompt_toolkit.filters import Condition
+from prompt_toolkit.layout.controls import FormattedTextControl
+from prompt_toolkit.widgets.base import _T, E as Event
+from prompt_toolkit.application import Application
+from prompt_toolkit.layout import Layout
+from prompt_toolkit.layout.containers import HSplit, Window, Container
+from prompt_toolkit.layout.margins import ConditionalMargin, ScrollbarMargin
+from prompt_toolkit.key_binding.key_bindings import KeyBindings, merge_key_bindings
+from prompt_toolkit.key_binding.defaults import load_key_bindings
+from prompt_toolkit.formatted_text import AnyFormattedText, to_formatted_text, StyleAndTextTuples
+from prompt_toolkit.keys import Keys
+
+
+class SelectList(typing.Generic[_T]):
+    """
+    List of selectable values. Only one can be chosen, then its value is returned
+
+    :param values: List of (label, value) tuples.
+    """
+
+    open_character: str = ""
+    close_character: str = ""
+    # ⏺ • ○ ⊙ ⋅ 🞅 ⦿
+    selected_character: str = "⦿"
+    unselected_character: str = "○"
+    container_style: str = ""
+    default_style: str = ""
+    selected_style: str = ""
+    show_scrollbar: bool = True
+
+    def __init__(
+        self,
+        values: typing.Sequence[tuple[AnyFormattedText, _T]],
+    ) -> None:
+        assert len(values) > 0
+
+        self.choices = sorted(values)
+        self.value: _T | None = None
+        self._selected_index = 0
+
+        # Key bindings.
+        kb = KeyBindings()
+
+        @kb.add("up")
+        def _up(event: Event) -> None:
+            self._selected_index = max(0, self._selected_index - 1)
+
+        @kb.add("down")
+        def _down(event: Event) -> None:
+            self._selected_index = min(len(self.choices) - 1, self._selected_index + 1)
+
+        @kb.add("pageup")
+        def _pageup(event: Event) -> None:
+            w = event.app.layout.current_window
+            if w.render_info:
+                self._selected_index = max(
+                    0, self._selected_index - len(w.render_info.displayed_lines)
+                )
+
+        @kb.add("pagedown")
+        def _pagedown(event: Event) -> None:
+            w = event.app.layout.current_window
+            if w.render_info:
+                self._selected_index = min(
+                    len(self.choices) - 1,
+                    self._selected_index + len(w.render_info.displayed_lines),
+                )
+
+        @kb.add("enter")
+        @kb.add(" ")
+        def _click(event: Event) -> None:
+            self.value = self.choices[self._selected_index][1]
+            event.app.exit(result=self.value)  
+
+        @kb.add('c-c')
+        def exit_(event):
+            """
+            Pressing Ctrl-c will exit the user interface.
+            """
+            event.app.exit()
+
+        @kb.add(Keys.Any)
+        def _find(event: Event) -> None:
+            # We first check values after the selected value, then all values.
+            values = list(self.choices)
+            for value in values[self._selected_index + 1 :] + values:
+                text = fragment_list_to_text(to_formatted_text(value[0])).lower()
+
+                if text.startswith(event.data.lower()):
+                    self._selected_index = self.choices.index(value)
+                    return
+
+        # Control and window.
+        self.control = FormattedTextControl(
+            self._get_text_fragments, key_bindings=kb, focusable=True
+        )
+
+        self.window = Window(
+            content=self.control,
+            style=self.container_style,
+            right_margins=[
+                ConditionalMargin(
+                    margin=ScrollbarMargin(display_arrows=True),
+                    filter=Condition(lambda: self.show_scrollbar),
+                ),
+            ],
+            dont_extend_height=True,
+        )
+
+    def _get_text_fragments(self) -> StyleAndTextTuples:
+        result: StyleAndTextTuples = []
+        for i, value in enumerate(self.choices):
+            selected = i == self._selected_index
+
+            style = ""
+            if selected:
+                style += " " + self.selected_style
+
+            result.append((style, self.open_character))
+
+            if selected:
+                result.append(("[SetCursorPosition]", ""))
+
+            result.append((style, self.selected_character if selected else self.unselected_character))
+            result.append((style, self.close_character))
+            result.append((self.default_style, " "))
+            result.extend(to_formatted_text(value[0], style=self.default_style))
+            result.append(("", "\n"))
+
+        result.pop()  # Remove last newline.
+        return result
+
+    def __pt_container__(self) -> Container:
+        return self.window
+
 def main():
 
     depend_zip('LibriTTS pre-trained model', MODEL_PATH + CONFIG_FILENAME, MODEL_URL)
@@ -266,9 +418,56 @@ def main():
 
     initialize()
     print('[green]Successfully initialized model.[/green]')
-    synthesize("Data/reference_audio/dia_thankful.wav", "output/dia_thankful.wav", "Thus did this humane and right minded father comfort his unhappy daughter, and her mother embracing her again, did all she could to soothe her feelings.")
+
+    # with ptg.WindowManager() as manager:
+    #     manager.layout.add_slot("Body")
+        
+    #     reference = choose_reference(manager)
+
+
+
+    #     await reference
+
+    #     window = ptg.Window(
+    #         f"[bold accent] Chose reference: {reference.result}",
+    #         is_noblur = True,
+    #         is_noresize = True,
+    #         is_static = True,
+    #     )
+
+    #     manager.add(window)
+
+    os.makedirs(os.path.dirname(REFERENCE_PATH), exist_ok=True)
+    filenames = next(os.walk(REFERENCE_PATH), (None, None, []))[2]
+    wavfiles = [f for f in filenames if f.endswith('.wav')]
+
+    if not wavfiles:
+        if filenames:
+            print(f"Reference audio clips in {REFERENCE_PATH} must be .wav files")
+            typer.Abort()
+        else:
+            print(f"You do not have any reference audio clips. Place a .wav file {REFERENCE_PATH} containing a ~3 second voice clip to use as a reference.")
+            typer.Exit()
+
+    select_list =  SelectList([(f[:-4], f) for f in wavfiles])
+    application = Application(
+        layout=Layout(HSplit([ Label('Choose reference speaker:'), select_list])),
+        key_bindings=load_key_bindings(),
+    )
+
+    application.output.show_cursor = lambda:None
+    
+    choice = application.run()
+    if choice is None:
+        return
+
+    synthesize(choice, "Thus did this humane and right minded father comfort his unhappy daughter, and her mother embracing her again, did all she could to soothe her feelings.")
     print(f"[green]Synthesized {1} items.[/green]")
 
+# def wrap_main():
+#     asyncio.run(main())
+
 if __name__ == "__main__":
+    # typer.run(wrap_main)
     typer.run(main)
 

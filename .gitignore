@@ -13,3 +13,6 @@
 # audio files
 /Data/reference_audio
 /Data/nltk
+
+# Output
+/Output/

@@ -6,24 +6,15 @@ import typing
 
 import prompt_toolkit
 
-from Modules.ui import SelectList
+from Modules.ui import REFERENCE_PATH, choose_reference, depend_zip, write_audio
 
 random.seed(0)
 import numpy as np
 np.random.seed(0)
 import yaml
-import os
 import typer
 from rich import print
-import gdown
-from io import BytesIO
-from urllib.request import urlopen
-from zipfile import ZipFile
-from prompt_toolkit.widgets import Label
-from prompt_toolkit.application import Application
-from prompt_toolkit.layout import Layout
-from prompt_toolkit.layout.containers import HSplit, Window, Container
-from prompt_toolkit.key_binding.defaults import load_key_bindings
+from prompt_toolkit.layout.containers import Window, Container
 from prompt_toolkit.key_binding import KeyBindings
 
 import torch
@@ -38,30 +29,18 @@ import nltk
 from nltk.tokenize import word_tokenize
 from Modules.diffusion.sampler import DiffusionSampler, ADPM2Sampler, KarrasSchedule
 from Utils.PLBERT.util import load_plbert
+from phonemizer.backend import EspeakBackend
 
 from models import *
 from utils import *
 from text_utils import TextCleaner
+from config import * 
 
-from phonemizer.backend import EspeakBackend
-from scipy.io import wavfile
-
-SAMPLE_RATE = 24000
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
-CONFIG_FILENAME = 'config.yml'
-EPOCH_FILENAME = 'epochs_2nd_00020.pth'
-MODEL_URL = 'https://drive.google.com/uc?id=1jK_VV3TnGM9dkrIMsdQ_upov8FrIymr7'
-MODEL_PATH = 'Models/LibriTTS/'
-NLTK_DATA_PATH = 'Data/nltk/'
 nltk.data.path = [NLTK_DATA_PATH]
-TOKENIZERS_PATH = NLTK_DATA_PATH + 'tokenizers/'
-PUNKT_PATH = TOKENIZERS_PATH + 'punkt/PY3/english.pickle'
-PUNKT_URL = 'https://raw.githubusercontent.com/nltk/nltk_data/gh-pages/packages/tokenizers/punkt.zip'
-REFERENCE_PATH = 'Data/reference_audio/'
-OUTPUT_PATH = 'Output/'
 text_cleaner = TextCleaner()
 phonemizer = EspeakBackend(language='en-us', preserve_punctuation=True, with_stress=True, words_mismatch='ignore')
-config = None # initialized by initialize()
+model_config = None # initialized by initialize()
 model_params: Munch | None = None # initialized by initialize()
 model = None # initialized by initialize()
 sampler = None # initialized by initialize()
@@ -104,15 +83,15 @@ def compute_style(path: str) -> Tensor:
 def initialize():
 
     # load config
-    global config
-    config = yaml.safe_load(open(MODEL_PATH + CONFIG_FILENAME))
+    global model_config
+    model_config = yaml.safe_load(open(MODEL_PATH + CONFIG_FILENAME))
     global model_params
-    model_params = typing.cast(Munch, recursive_munch(config['model_params']))
+    model_params = typing.cast(Munch, recursive_munch(model_config['model_params']))
 
     # initialize model
-    text_aligner = load_ASR_models(config.get('ASR_path', False), config.get('ASR_config', False))
-    pitch_extractor = load_F0_models(config.get('F0_path', False))
-    plbert = load_plbert(config.get('PLBERT_dir', False))
+    text_aligner = load_ASR_models(model_config.get('ASR_path', False), model_config.get('ASR_config', False))
+    pitch_extractor = load_F0_models(model_config.get('F0_path', False))
+    plbert = load_plbert(model_config.get('PLBERT_dir', False))
     global model
     model = build_model(model_params, text_aligner, pitch_extractor, plbert)
     _ = [model[key].eval() for key in model]
@@ -215,80 +194,12 @@ def inference(text, reference_style, alpha = 0.3, beta = 0.7, diffusion_steps=5,
         
     return out.squeeze().cpu().numpy()[..., :-50] # weird pulse at the end of the model, need to be fixed later
 
-def synthesize(reference_file: str, text: str, filename: str = ""):
-
-    start = time.time()
-    audio = inference(text, compute_style(REFERENCE_PATH + reference_file))
-    # rtf = (time.time() - start) / (len(wav) / SAMPLE_RATE)
-    processing_time = time.time() - start
-    # print(f"RTF = {rtf:5f}")
-
-    # Convert to (little-endian) 16 bit integers.
-    audio = np.int16(audio / np.max(np.abs(audio)) * 32767)
-    os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
-    if not filename:
-        filename = re.sub(r'\W', '', text)[:20] + '.wav'
-    wavfile.write(f"{OUTPUT_PATH}{filename}", SAMPLE_RATE, audio)
-    print(f"[green]Synthesized {filename}[/green]")
-
-def depend_zip(name: str, check_path: str, url: str, extract_path: str | None = None):
-    if not os.path.isfile(check_path):
-        download_model = typer.confirm(f"ℹ️  It appears you are missing the {name}. Would you like to download it now?")
-        manual_instructions = f"For manual installation, download the {name} from {url}, and extract it into {extract_path if extract_path else 'the project root'}."
-        if not download_model:
-            print(manual_instructions)
-            raise typer.Exit()
-        
-        try:
-            if url.startswith('https://drive.google.com'):
-                gdown.cached_download(url=url, path=extract_path, quiet=False, postprocess=gdown.extractall)
-            else:
-                with urlopen(url) as res:
-                    with ZipFile(BytesIO(res.read())) as zipfile:
-                        zipfile.extractall(extract_path)
-        except Exception as e:
-            print(f"[red]There was a problem downloading the {name}.[/red]")
-            print(e)
-            print(manual_instructions)
-            raise typer.Abort()
-        if not os.path.isfile(check_path):
-            print("[red]Extracted files did not have the expected file structure![/red]")
-            raise typer.Abort()
-        
-        print(f"[green]{name} successfully downloaded and extracted.[/green]")
-
-def choose_reference() -> str | None:
-    # Ensure there is at least one reference speaker
-    os.makedirs(os.path.dirname(REFERENCE_PATH), exist_ok=True)
-    filenames = next(os.walk(REFERENCE_PATH), (None, None, []))[2]
-    wavfiles = [f for f in filenames if f.endswith('.wav')]
-
-    if not wavfiles:
-        if filenames:
-            print(f"Reference audio clips in {REFERENCE_PATH} must be .wav files")
-            typer.Abort()
-        else:
-            print(f"You do not have any reference audio clips. Place a .wav file {REFERENCE_PATH} containing a ~3 second voice clip to use as a reference.")
-            typer.Exit()
-
-    select_list = SelectList([(f[:-4], f) for f in wavfiles])
-    application = Application(
-        layout=Layout(HSplit([ Label('Choose reference speaker (Ctrl+C to quit)'), select_list])),
-        key_bindings=load_key_bindings(),
-    )
-
-    application.output.show_cursor = lambda:None
-    
-    return application.run()
-
 class State(Enum):
-    SETUP = 1
-    CHOOSE_REFERENCE = 2
-    SYNTHESIZE = 3
-    DONE = 4
+    CHOOSE_REFERENCE = 1
+    SYNTHESIZE = 2
+    DONE = 3
 
 def main():
-    state: State = State.SETUP
     depend_zip('LibriTTS pre-trained model', MODEL_PATH + CONFIG_FILENAME, MODEL_URL)
     depend_zip('Punkt tokenizer', PUNKT_PATH, PUNKT_URL, TOKENIZERS_PATH)
 
@@ -317,7 +228,13 @@ def main():
             if text is None:
                 state = State.CHOOSE_REFERENCE
             else:
-                synthesize(typing.cast(str, reference_file), text)
+                start = time.time()
+                audio = inference(text, compute_style(REFERENCE_PATH + typing.cast(str, reference_file)))
+                processing_time = time.time() - start
+                duration = len(audio) / SAMPLE_RATE
+                filename = re.sub(r'\W', '', text)[:20] + '.wav'
+                write_audio(audio, filename)
+                print(f"[green]Synthesized {filename}![/green] Wrote {duration:2f}s of data in {processing_time:2f}s")
 
 if __name__ == "__main__":
     typer.run(main)

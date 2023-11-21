@@ -1,4 +1,13 @@
+import os
 import typing
+import gdown
+from io import BytesIO
+from urllib.request import urlopen
+from zipfile import ZipFile
+import numpy as np
+from scipy.io import wavfile
+
+import typer
 from prompt_toolkit.formatted_text.utils import fragment_list_to_text
 from prompt_toolkit.filters import Condition
 from prompt_toolkit.layout.controls import FormattedTextControl
@@ -8,6 +17,13 @@ from prompt_toolkit.layout.margins import ConditionalMargin, ScrollbarMargin
 from prompt_toolkit.key_binding.key_bindings import KeyBindings
 from prompt_toolkit.formatted_text import AnyFormattedText, to_formatted_text, StyleAndTextTuples
 from prompt_toolkit.keys import Keys
+from prompt_toolkit.widgets import Label
+from prompt_toolkit.application import Application
+from prompt_toolkit.layout import Layout
+from prompt_toolkit.layout.containers import HSplit, Window, Container
+from prompt_toolkit.key_binding.defaults import load_key_bindings
+
+from config import * 
 
 # Modified version of prompt_toolkit.widgets.base._DialogList
 class SelectList(typing.Generic[_T]):
@@ -131,3 +147,61 @@ class SelectList(typing.Generic[_T]):
 
     def __pt_container__(self) -> Container:
         return self.window
+    
+def depend_zip(name: str, check_path: str, url: str, extract_path: str | None = None):
+    if not os.path.isfile(check_path):
+        download_model = typer.confirm(f"ℹ️  It appears you are missing the {name}. Would you like to download it now?")
+        manual_instructions = f"For manual installation, download the {name} from {url}, and extract it into {extract_path if extract_path else 'the project root'}."
+        if not download_model:
+            print(manual_instructions)
+            raise typer.Exit()
+        
+        try:
+            if url.startswith('https://drive.google.com'):
+                gdown.cached_download(url=url, path=extract_path, quiet=False, postprocess=gdown.extractall)
+            else:
+                with urlopen(url) as res:
+                    with ZipFile(BytesIO(res.read())) as zipfile:
+                        zipfile.extractall(extract_path)
+        except Exception as e:
+            print(f"[red]There was a problem downloading the {name}.[/red]")
+            print(e)
+            print(manual_instructions)
+            raise typer.Abort()
+        if not os.path.isfile(check_path):
+            print("[red]Extracted files did not have the expected file structure![/red]")
+            raise typer.Abort()
+        
+        print(f"[green]{name} successfully downloaded and extracted.[/green]")
+
+def choose_reference() -> str | None:
+    # Ensure there is at least one reference speaker
+    os.makedirs(os.path.dirname(REFERENCE_PATH), exist_ok=True)
+    filenames = next(os.walk(REFERENCE_PATH), (None, None, []))[2]
+    wavfiles = [f for f in filenames if f.endswith('.wav')]
+
+    if not wavfiles:
+        if filenames:
+            print(f"Reference audio clips in {REFERENCE_PATH} must be .wav files")
+            typer.Abort()
+        else:
+            print(f"You do not have any reference audio clips. Place a .wav file {REFERENCE_PATH} containing a ~3 second voice clip to use as a reference.")
+            typer.Exit()
+
+    select_list = SelectList([(f[:-4], f) for f in wavfiles])
+    application = Application(
+        layout=Layout(HSplit([ Label('Choose reference speaker (Ctrl+C to quit)'), select_list])),
+        key_bindings=load_key_bindings(),
+    )
+
+    application.output.show_cursor = lambda:None
+    
+    return application.run()
+
+def write_audio(audio, filename: str):
+    # Convert to (little-endian) 16 bit integers.
+    audio = np.int16(audio / np.max(np.abs(audio)) * 32767)
+
+    # write output
+    os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
+    wavfile.write(f"{OUTPUT_PATH}{filename}", SAMPLE_RATE, audio)

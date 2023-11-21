@@ -1,22 +1,24 @@
 import random
 import re
-import typing
+
+from Modules.ui import SelectList
 
 random.seed(0)
 import numpy as np
 np.random.seed(0)
-import time
 import yaml
-from munch import Munch
 import os
 import typer
-import pytermgui as ptg
 from rich import print
 import gdown
 from io import BytesIO
 from urllib.request import urlopen
 from zipfile import ZipFile
-import asyncio
+from prompt_toolkit.widgets import Label
+from prompt_toolkit.application import Application
+from prompt_toolkit.layout import Layout
+from prompt_toolkit.layout.containers import HSplit, Window, Container
+from prompt_toolkit.key_binding.defaults import load_key_bindings
 
 import torch
 torch.manual_seed(0)
@@ -46,8 +48,7 @@ EPOCH_FILENAME = 'epochs_2nd_00020.pth'
 MODEL_URL = 'https://drive.google.com/uc?id=1jK_VV3TnGM9dkrIMsdQ_upov8FrIymr7'
 MODEL_PATH = 'Models/LibriTTS/'
 NLTK_DATA_PATH = 'Data/nltk/'
-# TODO: fix hardcoded path
-nltk.data.path = ["/Users/andrew/Documents/StyleTTS2/" + NLTK_DATA_PATH]
+nltk.data.path = [NLTK_DATA_PATH]
 TOKENIZERS_PATH = NLTK_DATA_PATH + 'tokenizers/'
 PUNKT_PATH = TOKENIZERS_PATH + 'punkt/PY3/english.pickle'
 PUNKT_URL = 'https://raw.githubusercontent.com/nltk/nltk_data/gh-pages/packages/tokenizers/punkt.zip'
@@ -67,6 +68,10 @@ def compute_style(path: str) -> Tensor:
     :param path: filepath to the audio file
     :returns: Tensor describing speech style
     """
+
+    if model is None:
+        raise RuntimeError("Expected model to be initiailized before computing styles")
+
     wave, sr = librosa.load(path, sr=SAMPLE_RATE)
     audio, index = librosa.effects.trim(wave, top_db=30)
     if sr != SAMPLE_RATE:
@@ -208,6 +213,7 @@ def synthesize(reference_file: str, text: str, filename: str = ""):
     audio = inference(text, compute_style(REFERENCE_PATH + reference_file))
     # rtf = (time.time() - start) / (len(wav) / SAMPLE_RATE)
     # print(f"RTF = {rtf:5f}")
+
     # Convert to (little-endian) 16 bit integers.
     audio = np.int16(audio / np.max(np.abs(audio)) * 32767)
     os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
@@ -241,176 +247,6 @@ def depend_zip(name: str, check_path: str, url: str, extract_path: str | None = 
         
         print(f"[green]{name} successfully downloaded and extracted.[/green]")
 
-# def choose_reference(manager: ptg.WindowManager) -> asyncio.Future[str]:
-#     os.makedirs(os.path.dirname(REFERENCE_PATH), exist_ok=True)
-#     filenames = next(os.walk(REFERENCE_PATH), (None, None, []))[2]
-#     wavfiles = [f for f in filenames if f.endswith('.wav')]
-
-#     if not wavfiles:
-#         if wavfiles:
-#             print(f"Reference audio clips in {REFERENCE_PATH} must be .wav files")
-#             typer.Abort()
-#         else:
-#             print(f"You do not have any reference audio clips. Place a .wav file {REFERENCE_PATH} containing a ~3 second voice clip to use as a reference.")
-#             typer.Exit()
-
-#     future = asyncio.Future()
-
-#     def on_choose(value: str):
-#         if future.done:
-#             return
-#         manager.remove(window)
-#         future.set_result(value)
-#     window = ptg.Window(
-#             "[bold accent]This is my example",
-#             *[[f[:-4], lambda _: on_choose(f)] for f in wavfiles],
-#             is_noblur = True,
-#             is_noresize = True,
-#             is_static = True,
-#     )
-
-#     manager.add(window)
-
-#     return future
-
-from prompt_toolkit.widgets import RadioList, Label
-# from prompt_toolkit.widgets.base import _DialogList, _T
-from prompt_toolkit.formatted_text.utils import fragment_list_to_text
-from prompt_toolkit.filters import Condition
-from prompt_toolkit.layout.controls import FormattedTextControl
-from prompt_toolkit.widgets.base import _T, E as Event
-from prompt_toolkit.application import Application
-from prompt_toolkit.layout import Layout
-from prompt_toolkit.layout.containers import HSplit, Window, Container
-from prompt_toolkit.layout.margins import ConditionalMargin, ScrollbarMargin
-from prompt_toolkit.key_binding.key_bindings import KeyBindings, merge_key_bindings
-from prompt_toolkit.key_binding.defaults import load_key_bindings
-from prompt_toolkit.formatted_text import AnyFormattedText, to_formatted_text, StyleAndTextTuples
-from prompt_toolkit.keys import Keys
-
-
-class SelectList(typing.Generic[_T]):
-    """
-    List of selectable values. Only one can be chosen, then its value is returned
-
-    :param values: List of (label, value) tuples.
-    """
-
-    open_character: str = ""
-    close_character: str = ""
-    # ⏺ • ○ ⊙ ⋅ 🞅 ⦿
-    selected_character: str = "⦿"
-    unselected_character: str = "○"
-    container_style: str = ""
-    default_style: str = ""
-    selected_style: str = ""
-    show_scrollbar: bool = True
-
-    def __init__(
-        self,
-        values: typing.Sequence[tuple[AnyFormattedText, _T]],
-    ) -> None:
-        assert len(values) > 0
-
-        self.choices = sorted(values)
-        self.value: _T | None = None
-        self._selected_index = 0
-
-        # Key bindings.
-        kb = KeyBindings()
-
-        @kb.add("up")
-        def _up(event: Event) -> None:
-            self._selected_index = max(0, self._selected_index - 1)
-
-        @kb.add("down")
-        def _down(event: Event) -> None:
-            self._selected_index = min(len(self.choices) - 1, self._selected_index + 1)
-
-        @kb.add("pageup")
-        def _pageup(event: Event) -> None:
-            w = event.app.layout.current_window
-            if w.render_info:
-                self._selected_index = max(
-                    0, self._selected_index - len(w.render_info.displayed_lines)
-                )
-
-        @kb.add("pagedown")
-        def _pagedown(event: Event) -> None:
-            w = event.app.layout.current_window
-            if w.render_info:
-                self._selected_index = min(
-                    len(self.choices) - 1,
-                    self._selected_index + len(w.render_info.displayed_lines),
-                )
-
-        @kb.add("enter")
-        @kb.add(" ")
-        def _click(event: Event) -> None:
-            self.value = self.choices[self._selected_index][1]
-            event.app.exit(result=self.value)  
-
-        @kb.add('c-c')
-        def exit_(event):
-            """
-            Pressing Ctrl-c will exit the user interface.
-            """
-            event.app.exit()
-
-        @kb.add(Keys.Any)
-        def _find(event: Event) -> None:
-            # We first check values after the selected value, then all values.
-            values = list(self.choices)
-            for value in values[self._selected_index + 1 :] + values:
-                text = fragment_list_to_text(to_formatted_text(value[0])).lower()
-
-                if text.startswith(event.data.lower()):
-                    self._selected_index = self.choices.index(value)
-                    return
-
-        # Control and window.
-        self.control = FormattedTextControl(
-            self._get_text_fragments, key_bindings=kb, focusable=True
-        )
-
-        self.window = Window(
-            content=self.control,
-            style=self.container_style,
-            right_margins=[
-                ConditionalMargin(
-                    margin=ScrollbarMargin(display_arrows=True),
-                    filter=Condition(lambda: self.show_scrollbar),
-                ),
-            ],
-            dont_extend_height=True,
-        )
-
-    def _get_text_fragments(self) -> StyleAndTextTuples:
-        result: StyleAndTextTuples = []
-        for i, value in enumerate(self.choices):
-            selected = i == self._selected_index
-
-            style = ""
-            if selected:
-                style += " " + self.selected_style
-
-            result.append((style, self.open_character))
-
-            if selected:
-                result.append(("[SetCursorPosition]", ""))
-
-            result.append((style, self.selected_character if selected else self.unselected_character))
-            result.append((style, self.close_character))
-            result.append((self.default_style, " "))
-            result.extend(to_formatted_text(value[0], style=self.default_style))
-            result.append(("", "\n"))
-
-        result.pop()  # Remove last newline.
-        return result
-
-    def __pt_container__(self) -> Container:
-        return self.window
-
 def main():
 
     depend_zip('LibriTTS pre-trained model', MODEL_PATH + CONFIG_FILENAME, MODEL_URL)
@@ -418,24 +254,6 @@ def main():
 
     initialize()
     print('[green]Successfully initialized model.[/green]')
-
-    # with ptg.WindowManager() as manager:
-    #     manager.layout.add_slot("Body")
-        
-    #     reference = choose_reference(manager)
-
-
-
-    #     await reference
-
-    #     window = ptg.Window(
-    #         f"[bold accent] Chose reference: {reference.result}",
-    #         is_noblur = True,
-    #         is_noresize = True,
-    #         is_static = True,
-    #     )
-
-    #     manager.add(window)
 
     os.makedirs(os.path.dirname(REFERENCE_PATH), exist_ok=True)
     filenames = next(os.walk(REFERENCE_PATH), (None, None, []))[2]
@@ -464,10 +282,6 @@ def main():
     synthesize(choice, "Thus did this humane and right minded father comfort his unhappy daughter, and her mother embracing her again, did all she could to soothe her feelings.")
     print(f"[green]Synthesized {1} items.[/green]")
 
-# def wrap_main():
-#     asyncio.run(main())
-
 if __name__ == "__main__":
-    # typer.run(wrap_main)
     typer.run(main)
 

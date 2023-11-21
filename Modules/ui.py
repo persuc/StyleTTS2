@@ -14,7 +14,7 @@ import typer
 from prompt_toolkit.formatted_text.utils import fragment_list_to_text
 from prompt_toolkit.filters import Condition
 from prompt_toolkit.layout.controls import FormattedTextControl
-from prompt_toolkit.widgets.base import _T, E as Event
+from prompt_toolkit.widgets.base import _T, E as Event, _DialogList
 from prompt_toolkit.layout.containers import Window, Container
 from prompt_toolkit.layout.margins import ConditionalMargin, ScrollbarMargin
 from prompt_toolkit.key_binding.key_bindings import KeyBindings
@@ -28,128 +28,43 @@ from prompt_toolkit.key_binding.defaults import load_key_bindings
 
 from config import * 
 
-# Modified version of prompt_toolkit.widgets.base._DialogList
-class SelectList(typing.Generic[_T]):
+# TODO: This works ok, but _DialogList does not accept keybinds, so Ctrl+C to interrupt is impossible
+class SelectList(_DialogList[_T]):
     """
     List of selectable values. Only one can be chosen, then its value is returned
 
     :param values: List of (label, value) tuples.
     """
-
-    open_character: str = ""
-    close_character: str = ""
-    # ⏺ • ○ ⊙ ⋅ 🞅 ⦿
     selected_character: str = "⦿"
     unselected_character: str = "○"
-    container_style: str = ""
-    default_style: str = ""
-    selected_style: str = ""
-    show_scrollbar: bool = True
+    on_choose: typing.Callable[[_T], None] = lambda x: None
 
     def __init__(
         self,
-        values: typing.Sequence[tuple[AnyFormattedText, _T]],
+        values: typing.Sequence[tuple[_T, AnyFormattedText]],
+        on_choose: typing.Callable[[_T], None],
     ) -> None:
-        assert len(values) > 0
+        super(SelectList, self).__init__(values)
+        self.on_choose = on_choose
 
-        self.choices = sorted(values)
-        self.value: _T | None = None
-        self._selected_index = 0
-
-        # Key bindings.
-        kb = KeyBindings()
-
-        @kb.add("up")
-        def _up(event: Event) -> None:
-            self._selected_index = max(0, self._selected_index - 1)
-
-        @kb.add("down")
-        def _down(event: Event) -> None:
-            self._selected_index = min(len(self.choices) - 1, self._selected_index + 1)
-
-        @kb.add("pageup")
-        def _pageup(event: Event) -> None:
-            w = event.app.layout.current_window
-            if w.render_info:
-                self._selected_index = max(
-                    0, self._selected_index - len(w.render_info.displayed_lines)
-                )
-
-        @kb.add("pagedown")
-        def _pagedown(event: Event) -> None:
-            w = event.app.layout.current_window
-            if w.render_info:
-                self._selected_index = min(
-                    len(self.choices) - 1,
-                    self._selected_index + len(w.render_info.displayed_lines),
-                )
-
-        @kb.add("enter")
-        @kb.add(" ")
-        def _click(event: Event) -> None:
-            self.value = self.choices[self._selected_index][1]
-            event.app.exit(result=self.value)  
-
-        @kb.add('c-c')
-        def exit_(event):
-            """
-            Pressing Ctrl-c will exit the user interface.
-            """
-            event.app.exit()
-
-        @kb.add(Keys.Any)
-        def _find(event: Event) -> None:
-            # We first check values after the selected value, then all values.
-            values = list(self.choices)
-            for value in values[self._selected_index + 1 :] + values:
-                text = fragment_list_to_text(to_formatted_text(value[0])).lower()
-
-                if text.startswith(event.data.lower()):
-                    self._selected_index = self.choices.index(value)
-                    return
-
-        # Control and window.
-        self.control = FormattedTextControl(
-            self._get_text_fragments, key_bindings=kb, focusable=True
-        )
-
-        self.window = Window(
-            content=self.control,
-            style=self.container_style,
-            right_margins=[
-                ConditionalMargin(
-                    margin=ScrollbarMargin(display_arrows=True),
-                    filter=Condition(lambda: self.show_scrollbar),
-                ),
-            ],
-            dont_extend_height=True,
-        )
+    def _handle_enter(self) -> None:
+        self.on_choose(self.values[self._selected_index][0])
 
     def _get_text_fragments(self) -> StyleAndTextTuples:
         result: StyleAndTextTuples = []
-        for i, value in enumerate(self.choices):
+
+        for i, value in enumerate(self.values):
             selected = i == self._selected_index
-
-            style = ""
-            if selected:
-                style += " " + self.selected_style
-
-            result.append((style, self.open_character))
 
             if selected:
                 result.append(("[SetCursorPosition]", ""))
 
-            result.append((style, self.selected_character if selected else self.unselected_character))
-            result.append((style, self.close_character))
-            result.append((self.default_style, " "))
-            result.extend(to_formatted_text(value[0], style=self.default_style))
+            result.append(("", (self.selected_character if selected else self.unselected_character) + " "))
+            result.extend(to_formatted_text(value[1]))
             result.append(("", "\n"))
 
         result.pop()  # Remove last newline.
         return result
-
-    def __pt_container__(self) -> Container:
-        return self.window
     
 def depend_zip(name: str, check_path: str, url: str, extract_path: str | None = None):
     """ Check for a dependency, and download and extract it if it is missing """
@@ -193,7 +108,10 @@ def choose_reference() -> str | None:
             print(f"You do not have any reference audio clips. Place a .wav file {REFERENCE_PATH} containing a ~3 second voice clip to use as a reference.")
             typer.Exit()
 
-    select_list = SelectList([(f[:-4], f) for f in wavfiles])
+    result = ''
+    def set_result(x: str):
+        result = x
+    select_list = SelectList([(f[:-4], f) for f in wavfiles], set_result)
     application = Application(
         layout=Layout(HSplit([ Label('Choose reference speaker (Ctrl+C to quit)'), select_list])),
         key_bindings=load_key_bindings(),
@@ -202,7 +120,7 @@ def choose_reference() -> str | None:
     # hackily hide the cursor by overwriting the show_cursor method
     show_cursor = application.output.show_cursor
     application.output.show_cursor = lambda: None
-    result = application.run()
+    application.run()
     # we have to restore it afterwards
     application.output.show_cursor = show_cursor
     return result

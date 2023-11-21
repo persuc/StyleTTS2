@@ -1,5 +1,10 @@
+from enum import Enum
 import random
 import re
+import time
+import typing
+
+import prompt_toolkit
 
 from Modules.ui import SelectList
 
@@ -19,13 +24,13 @@ from prompt_toolkit.application import Application
 from prompt_toolkit.layout import Layout
 from prompt_toolkit.layout.containers import HSplit, Window, Container
 from prompt_toolkit.key_binding.defaults import load_key_bindings
+from prompt_toolkit.key_binding import KeyBindings
 
 import torch
 torch.manual_seed(0)
 torch.backends.cudnn.benchmark = False
 torch.backends.cudnn.deterministic = True
-from torch import Tensor, nn
-import torch.nn.functional as F
+from torch import Tensor
 import torchaudio
 import librosa
 
@@ -57,7 +62,7 @@ OUTPUT_PATH = 'Output/'
 text_cleaner = TextCleaner()
 phonemizer = EspeakBackend(language='en-us', preserve_punctuation=True, with_stress=True, words_mismatch='ignore')
 config = None # initialized by initialize()
-model_params = None # initialized by initialize()
+model_params: Munch | None = None # initialized by initialize()
 model = None # initialized by initialize()
 sampler = None # initialized by initialize()
 
@@ -70,7 +75,7 @@ def compute_style(path: str) -> Tensor:
     """
 
     if model is None:
-        raise RuntimeError("Expected model to be initiailized before computing styles")
+        raise RuntimeError("Expected model to be initialized before computing styles")
 
     wave, sr = librosa.load(path, sr=SAMPLE_RATE)
     audio, index = librosa.effects.trim(wave, top_db=30)
@@ -102,7 +107,7 @@ def initialize():
     global config
     config = yaml.safe_load(open(MODEL_PATH + CONFIG_FILENAME))
     global model_params
-    model_params = recursive_munch(config['model_params'])
+    model_params = typing.cast(Munch, recursive_munch(config['model_params']))
 
     # initialize model
     text_aligner = load_ASR_models(config.get('ASR_path', False), config.get('ASR_config', False))
@@ -142,6 +147,9 @@ def initialize():
     )
 
 def inference(text, reference_style, alpha = 0.3, beta = 0.7, diffusion_steps=5, embedding_scale=1):
+    if model is None or sampler is None or model_params is None:
+        raise RuntimeError("Expected model to be initialized before performing inference")
+
     phonemes = phonemizer.phonemize([text.strip()])
     phonemes = word_tokenize(phonemes[0])
     phonemes = ' '.join(phonemes)
@@ -209,9 +217,10 @@ def inference(text, reference_style, alpha = 0.3, beta = 0.7, diffusion_steps=5,
 
 def synthesize(reference_file: str, text: str, filename: str = ""):
 
-    # start = time.time()
+    start = time.time()
     audio = inference(text, compute_style(REFERENCE_PATH + reference_file))
     # rtf = (time.time() - start) / (len(wav) / SAMPLE_RATE)
+    processing_time = time.time() - start
     # print(f"RTF = {rtf:5f}")
 
     # Convert to (little-endian) 16 bit integers.
@@ -220,6 +229,7 @@ def synthesize(reference_file: str, text: str, filename: str = ""):
     if not filename:
         filename = re.sub(r'\W', '', text)[:20] + '.wav'
     wavfile.write(f"{OUTPUT_PATH}{filename}", SAMPLE_RATE, audio)
+    print(f"[green]Synthesized {filename}[/green]")
 
 def depend_zip(name: str, check_path: str, url: str, extract_path: str | None = None):
     if not os.path.isfile(check_path):
@@ -247,14 +257,8 @@ def depend_zip(name: str, check_path: str, url: str, extract_path: str | None = 
         
         print(f"[green]{name} successfully downloaded and extracted.[/green]")
 
-def main():
-
-    depend_zip('LibriTTS pre-trained model', MODEL_PATH + CONFIG_FILENAME, MODEL_URL)
-    depend_zip('Punkt tokenizer', PUNKT_PATH, PUNKT_URL, TOKENIZERS_PATH)
-
-    initialize()
-    print('[green]Successfully initialized model.[/green]')
-
+def choose_reference() -> str | None:
+    # Ensure there is at least one reference speaker
     os.makedirs(os.path.dirname(REFERENCE_PATH), exist_ok=True)
     filenames = next(os.walk(REFERENCE_PATH), (None, None, []))[2]
     wavfiles = [f for f in filenames if f.endswith('.wav')]
@@ -267,21 +271,53 @@ def main():
             print(f"You do not have any reference audio clips. Place a .wav file {REFERENCE_PATH} containing a ~3 second voice clip to use as a reference.")
             typer.Exit()
 
-    select_list =  SelectList([(f[:-4], f) for f in wavfiles])
+    select_list = SelectList([(f[:-4], f) for f in wavfiles])
     application = Application(
-        layout=Layout(HSplit([ Label('Choose reference speaker:'), select_list])),
+        layout=Layout(HSplit([ Label('Choose reference speaker (Ctrl+C to quit)'), select_list])),
         key_bindings=load_key_bindings(),
     )
 
     application.output.show_cursor = lambda:None
     
-    choice = application.run()
-    if choice is None:
-        return
+    return application.run()
 
-    synthesize(choice, "Thus did this humane and right minded father comfort his unhappy daughter, and her mother embracing her again, did all she could to soothe her feelings.")
-    print(f"[green]Synthesized {1} items.[/green]")
+class State(Enum):
+    SETUP = 1
+    CHOOSE_REFERENCE = 2
+    SYNTHESIZE = 3
+    DONE = 4
+
+def main():
+    state: State = State.SETUP
+    depend_zip('LibriTTS pre-trained model', MODEL_PATH + CONFIG_FILENAME, MODEL_URL)
+    depend_zip('Punkt tokenizer', PUNKT_PATH, PUNKT_URL, TOKENIZERS_PATH)
+
+    initialize()
+    print('[green]Successfully initialized model.[/green]')
+
+    state = State.CHOOSE_REFERENCE
+    reference_file = None
+    while state != State.DONE:
+        if state == State.CHOOSE_REFERENCE:
+            reference_file = choose_reference()
+            if reference_file is None:
+                state = State.DONE
+            else:
+                print('Enter text for synthesis (Ctrl+C to go back)')
+                state = State.SYNTHESIZE
+        elif state == State.SYNTHESIZE:
+            bindings = KeyBindings()
+
+            @bindings.add('c-c')
+            def _(event):
+                " Exit when `c-c` is pressed. "
+                event.app.exit()
+
+            text = prompt_toolkit.prompt('> ', key_bindings=bindings)
+            if text is None:
+                state = State.CHOOSE_REFERENCE
+            else:
+                synthesize(typing.cast(str, reference_file), text)
 
 if __name__ == "__main__":
     typer.run(main)
-

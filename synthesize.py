@@ -11,10 +11,11 @@ np.random.seed(0)
 import yaml
 from rich import print
 
-import prompt_toolkit
 from prompt_toolkit.layout.containers import Window, Container
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.cursor_shapes import CursorShape
+from prompt_toolkit.history import FileHistory
+from prompt_toolkit import PromptSession
 from Modules.ui import REFERENCE_PATH, choose_reference, depend_zip, play_audio, write_audio
 
 import torch
@@ -192,8 +193,14 @@ class State(Enum):
     SYNTHESIZE = 2
     DONE = 3
 
-# TODO: Use up/down arrow keys to cycle prompt history
 # TODO: Add LJSpeech support
+# TODO: Add multispeaker support
+# TODO: Explain keyboard controls in bottom bar
+
+# from prompt_toolkit.formatted_text import HTML
+
+# def bottom_toolbar():
+#     return HTML('Back: <b><style bg="ansired">Ctrl+C</style></b> Go back')
 
 def main():
     depend_zip('LibriTTS pre-trained model', PRETRAINED_MODEL_PATH, MODEL_URL)
@@ -207,6 +214,7 @@ def main():
     reference_file = ''
     reference_label = ''
     filepath = ''
+    session = PromptSession(history=FileHistory(PROMPT_HISTORY_PATH))
     while state != State.DONE:
         if state == State.CHOOSE_REFERENCE:
             reference = choose_reference()
@@ -230,7 +238,7 @@ def main():
                 play_audio(filepath)
 
             print(f"[deep_sky_blue1]({reference_label})[/deep_sky_blue1] ", end="")
-            text = prompt_toolkit.prompt("> ", key_bindings=bindings, cursor=CursorShape.UNDERLINE)
+            text = session.prompt("> ", key_bindings=bindings, cursor=CursorShape.UNDERLINE, wrap_lines=True)
             if text is None:
                 state = State.CHOOSE_REFERENCE
             elif len(text) > model_config['model_params']['max_conv_dim']:

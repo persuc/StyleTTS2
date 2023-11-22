@@ -15,6 +15,7 @@ __Other features__
 * Built with [Prompt Toolkit](https://python-prompt-toolkit.readthedocs.io/)
 * Output synthesized audio directly to wav files
 * Play synthesized speech from CLI as you generate it
+* Keep a history your prompts and revisit them using `↑ up` and `↓ down`, just like shell history
 * Added .gitignore
 * Some minor typing improvements
 

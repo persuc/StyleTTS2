@@ -4,10 +4,6 @@ import re
 import time
 import typing
 
-import prompt_toolkit
-
-from Modules.ui import REFERENCE_PATH, choose_reference, depend_zip, play_audio, write_audio
-
 random.seed(0)
 import numpy as np
 import numpy.typing as npt
@@ -15,9 +11,12 @@ np.random.seed(0)
 import yaml
 import typer
 from rich import print
+
+import prompt_toolkit
 from prompt_toolkit.layout.containers import Window, Container
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.cursor_shapes import CursorShape
+from Modules.ui import REFERENCE_PATH, choose_reference, depend_zip, play_audio, write_audio
 
 import torch
 torch.manual_seed(0)
@@ -36,14 +35,14 @@ from phonemizer.backend import EspeakBackend
 from models import *
 from utils import *
 from text_utils import TextCleaner
-from config import * 
+from Configs.app import *
 
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 nltk.data.path = [NLTK_DATA_PATH]
 text_cleaner = TextCleaner()
 phonemizer = EspeakBackend(language='en-us', preserve_punctuation=True, with_stress=True, words_mismatch='ignore')
-model_config = None # initialized by initialize()
-model_params: Munch | None = None # initialized by initialize()
+model_config = yaml.safe_load(open(MODEL_PATH + CONFIG_FILENAME))
+model_params = typing.cast(Munch, recursive_munch(model_config['model_params']))
 model = None # initialized by initialize()
 sampler = None # initialized by initialize()
 
@@ -58,10 +57,10 @@ def compute_style(path: str) -> Tensor:
     if model is None:
         raise RuntimeError("Expected model to be initialized before computing styles")
 
-    wave, sr = librosa.load(path, sr=SAMPLE_RATE)
+    wave, sr = librosa.load(path, sr=int(model_config['preprocess_params']['sr']))
     audio, index = librosa.effects.trim(wave, top_db=30)
-    if sr != SAMPLE_RATE:
-        audio = librosa.resample(audio, sr, SAMPLE_RATE)
+    if sr != model_config['preprocess_params']['sr']:
+        audio = librosa.resample(audio, orig_sr=sr, target_sr=int(model_config['preprocess_params']['sr']))
 
     # pre-process wave
     to_mel = torchaudio.transforms.MelSpectrogram(
@@ -83,13 +82,6 @@ def compute_style(path: str) -> Tensor:
     return torch.cat([ref_s, ref_p], dim=1)
 
 def initialize():
-
-    # load config
-    global model_config
-    model_config = yaml.safe_load(open(MODEL_PATH + CONFIG_FILENAME))
-    global model_params
-    model_params = typing.cast(Munch, recursive_munch(model_config['model_params']))
-
     # initialize model
     text_aligner = load_ASR_models(model_config.get('ASR_path', False), model_config.get('ASR_config', False))
     pitch_extractor = load_F0_models(model_config.get('F0_path', False))
@@ -100,7 +92,7 @@ def initialize():
     _ = [model[key].to(DEVICE) for key in model]
 
     # load params
-    params_whole = torch.load(MODEL_PATH + EPOCH_FILENAME, map_location='cpu')
+    params_whole = torch.load(PRETRAINED_MODEL_PATH, map_location='cpu')
     params = params_whole['net']
     for key in model:
         if key in params:
@@ -140,7 +132,7 @@ def inference(text, reference_style, alpha = 0.3, beta = 0.7, diffusion_steps=5,
     
     with torch.no_grad():
         input_lengths = torch.LongTensor([tokens.shape[-1]]).to(DEVICE)
-        text_mask = torch.arange(input_lengths.max()).unsqueeze(0).expand(input_lengths.shape[0], -1).type_as(input_lengths)
+        text_mask = torch.arange(typing.cast(int, input_lengths.max())).unsqueeze(0).expand(input_lengths.shape[0], -1).type_as(input_lengths)
         text_mask = torch.gt(text_mask+1, input_lengths.unsqueeze(1))
         text_mask = text_mask.to(DEVICE)
 
@@ -166,7 +158,7 @@ def inference(text, reference_style, alpha = 0.3, beta = 0.7, diffusion_steps=5,
         x, _ = model.predictor.lstm(d)
         duration = model.predictor.duration_proj(x)
 
-        duration = torch.sigmoid(duration).sum(axis=-1)
+        duration = torch.sigmoid(duration).sum(dim=-1)
         pred_dur = torch.round(duration.squeeze()).clamp(min=1)
 
         pred_aln_trg = torch.zeros(input_lengths, int(pred_dur.sum().data))
@@ -202,13 +194,14 @@ class State(Enum):
     DONE = 3
 
 def main():
-    depend_zip('LibriTTS pre-trained model', MODEL_PATH + CONFIG_FILENAME, MODEL_URL)
+    depend_zip('LibriTTS pre-trained model', PRETRAINED_MODEL_PATH, MODEL_URL)
     depend_zip('Punkt tokenizer', PUNKT_PATH, PUNKT_URL, TOKENIZERS_PATH)
 
     initialize()
     print('[green]Successfully initialized model.[/green]')
 
     state = State.CHOOSE_REFERENCE
+    style_cache: typing.Dict[str, Tensor] = {}
     reference_file = None
     filepath = ''
     while state != State.DONE:
@@ -232,16 +225,20 @@ def main():
                 " Play the most recently synthesized sound when `c-p` is pressed. "
                 play_audio(filepath)
 
-            text = prompt_toolkit.prompt('> ', key_bindings=bindings, cursor=CursorShape.UNDERLINE)
+            print(f"[deep_sky_blue1]({reference_file})[/deep_sky_blue1] ", end="")
+            text = prompt_toolkit.prompt("> ", key_bindings=bindings, cursor=CursorShape.UNDERLINE)
             if text is None:
                 state = State.CHOOSE_REFERENCE
-            elif len(text) > MODEL_SIZE:
-                print(f"[red]Sorry, StyleTTS2 is limited to {MODEL_SIZE} characters.[/red] Please shorten your input and try again.")
+            elif len(text) > model_config['model_params']['max_conv_dim']:
+                print(f"[red]Sorry, StyleTTS2 is limited to {model_config['model_params']['max_conv_dim']} characters.[/red] Please shorten your input and try again.")
             else:
+                reference_file = typing.cast(str, reference_file)
                 start = time.time()
-                audio = inference(text, compute_style(REFERENCE_PATH + typing.cast(str, reference_file)))
+                if reference_file not in style_cache:
+                    style_cache[reference_file] = compute_style(REFERENCE_PATH + reference_file)
+                audio = inference(text, style_cache[reference_file])
                 processing_time = time.time() - start
-                duration = len(audio) / SAMPLE_RATE
+                duration = len(audio) / model_config['preprocess_params']['sr']
                 filename = re.sub(r'\W', '', text)[:20]
                 filepath = write_audio(audio, filename)
                 print(f"[green]Synthesized {filepath}![/green]")

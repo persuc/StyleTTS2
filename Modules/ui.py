@@ -1,5 +1,6 @@
 import os
 import typing
+import yaml
 import gdown
 from io import BytesIO
 from urllib.request import urlopen
@@ -26,7 +27,9 @@ from prompt_toolkit.layout import Layout
 from prompt_toolkit.layout.containers import HSplit, Window, Container
 from prompt_toolkit.key_binding.defaults import load_key_bindings
 
-from config import * 
+from Configs.app import *
+
+model_config = yaml.safe_load(open(MODEL_PATH + CONFIG_FILENAME))
 
 # Modified version of prompt_toolkit.widgets.base._DialogList
 class SelectList(typing.Generic[_T]):
@@ -162,7 +165,9 @@ def depend_zip(name: str, check_path: str, url: str, extract_path: str | None = 
         
         try:
             if url.startswith('https://drive.google.com'):
-                gdown.cached_download(url=url, path=extract_path, quiet=False, postprocess=gdown.extractall)
+                zip_path = gdown.cached_download(url=url, path=extract_path, quiet=False)
+                os.rename(zip_path, zip_path + '.zip')
+                gdown.extractall(zip_path + '.zip', os.getcwd())
             else:
                 with urlopen(url) as res:
                     with ZipFile(BytesIO(res.read())) as zipfile:
@@ -179,7 +184,7 @@ def depend_zip(name: str, check_path: str, url: str, extract_path: str | None = 
         print(f"[green]{name} successfully downloaded and extracted.[/green]")
 
 def choose_reference() -> str | None:
-    """ Prompt user to choose a reference audio file. Searches config.REFERENCE_PATH. """
+    """ Prompt user to choose a reference audio file. Searches config.config['reference_path']. """
     # Ensure there is at least one reference speaker
     os.makedirs(os.path.dirname(REFERENCE_PATH), exist_ok=True)
     filenames = next(os.walk(REFERENCE_PATH), (None, None, []))[2]
@@ -188,10 +193,10 @@ def choose_reference() -> str | None:
     if not wavfiles:
         if filenames:
             print(f"Reference audio clips in {REFERENCE_PATH} must be .wav files")
-            typer.Abort()
+            raise typer.Abort()
         else:
-            print(f"You do not have any reference audio clips. Place a .wav file {REFERENCE_PATH} containing a ~3 second voice clip to use as a reference.")
-            typer.Exit()
+            print(f"You do not have any reference audio clips. Place a .wav file {config['reference_path']} containing a ~3 second voice clip to use as a reference.")
+            raise typer.Exit()
 
     select_list = SelectList([(f[:-4], f) for f in wavfiles])
     application = Application(
@@ -227,7 +232,7 @@ def write_audio(audio: npt.NDArray[np.float64], filename: str):
         counter += 1
         version = f"_{counter:03d}"
     filepath = f"{OUTPUT_PATH}{filename}{version}.wav"
-    wavfile.write(filepath, SAMPLE_RATE, audio)
+    wavfile.write(filepath, model_config['preprocess_params']['sr'], audio)
 
     return filepath
 

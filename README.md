@@ -1,14 +1,31 @@
-# StyleTTS 2: Towards Human-Level Text-to-Speech through Style Diffusion and Adversarial Training with Large Speech Language Models
+## Customizations on this fork
 
-## Customizations
+[synthesize.py](./synthesize.py) is a command line wrapper for StyleTTS 2. Enables synthesizing speech from the command line with some helpful quality-of-life features.
 
-* CLI usage (built with Typer)
-* Output directly to wav files
+__Automatically download dependencies__
+
+![](/Demo/deps.gif "Automatically downloading and unzipping pretrained model")
+
+__Choose reference speaker and synthesize speech__
+
+![](/Demo/usage.gif "Automatically downloading and unzipping pretrained model")
+
+__Other features__
+
+* Built with [Prompt Toolkit](https://python-prompt-toolkit.readthedocs.io/)
+* Output synthesized audio directly to wav files
+* Play synthesized speech from CLI as you generate it
 * Added .gitignore
+* Some minor typing improvements
 
-[synthesize.py](./synthesize.py) Is a command line wrapper for StyleTTS 2.
+__Usage__
+
+`python synthisize.py`
+
 
 ## Building espeak-ng on MacOS (Apple Silicon)
+
+I had issues building espeak-ng since /usr is a protected directory on recent versions of MacOS. Here was the process I followed, where I first install pcaudiolib to /opt, and then symlink the required libraries to /usr. You could probably also just set --prefix=/usr/local when install pcaudiolib.
 
 ```
 git clone git@github.com:espeak-ng/pcaudiolib.git
@@ -30,6 +47,8 @@ sudo make install
 ln -s /opt/lib/libpcaudio.dylib /usr/local/lib/libpcaudio.0.dylib
 
 ```
+
+# StyleTTS 2: Towards Human-Level Text-to-Speech through Style Diffusion and Adversarial Training with Large Speech Language Models
 
 ### Yinghao Aaron Li, Cong Han, Vinay S. Raghavan, Gavin Mischler, Nima Mesgarani
 

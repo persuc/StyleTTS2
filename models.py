@@ -10,7 +10,8 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.nn.utils import weight_norm, remove_weight_norm, spectral_norm
+from torch.nn.utils.weight_norm import weight_norm
+from torch.nn.utils.spectral_norm import spectral_norm
 
 from Utils.ASR.models import ASRCNN
 from Utils.JDC.model import JDCNet

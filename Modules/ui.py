@@ -183,8 +183,12 @@ def depend_zip(name: str, check_path: str, url: str, extract_path: str | None = 
         
         print(f"[green]{name} successfully downloaded and extracted.[/green]")
 
-def choose_reference() -> str | None:
-    """ Prompt user to choose a reference audio file. Searches config.config['reference_path']. """
+def choose_reference() -> typing.Tuple[str, str] | None:
+    """
+    Prompt user to choose a reference audio file. Searches config.config['reference_path'].
+    
+    :returns: tuple of (filename, label)
+    """
     # Ensure there is at least one reference speaker
     os.makedirs(os.path.dirname(REFERENCE_PATH), exist_ok=True)
     filenames = next(os.walk(REFERENCE_PATH), (None, None, []))[2]
@@ -195,7 +199,7 @@ def choose_reference() -> str | None:
             print(f"Reference audio clips in {REFERENCE_PATH} must be .wav files")
             raise typer.Abort()
         else:
-            print(f"You do not have any reference audio clips. Place a .wav file {config['reference_path']} containing a ~3 second voice clip to use as a reference.")
+            print(f"You do not have any reference audio clips. Place a .wav file {model_config['reference_path']} containing a ~3 second voice clip to use as a reference.")
             raise typer.Exit()
 
     select_list = SelectList([(f[:-4], f) for f in wavfiles])
@@ -210,7 +214,7 @@ def choose_reference() -> str | None:
     result = application.run()
     # we have to restore it afterwards
     application.output.show_cursor = show_cursor
-    return result
+    return result, result[:-4]
 
 def write_audio(audio: npt.NDArray[np.float64], filename: str):
     """

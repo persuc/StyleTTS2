@@ -214,6 +214,8 @@ def choose_reference() -> typing.Tuple[str, str] | None:
     result = application.run()
     # we have to restore it afterwards
     application.output.show_cursor = show_cursor
+    if result is None:
+        return None
     return result, result[:-4]
 
 def write_audio(audio: npt.NDArray[np.float64], filename: str):

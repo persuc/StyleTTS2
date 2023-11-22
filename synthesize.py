@@ -9,7 +9,6 @@ import numpy as np
 import numpy.typing as npt
 np.random.seed(0)
 import yaml
-import typer
 from rich import print
 
 import prompt_toolkit
@@ -193,6 +192,9 @@ class State(Enum):
     SYNTHESIZE = 2
     DONE = 3
 
+# TODO: Use up/down arrow keys to cycle prompt history
+# TODO: Add LJSpeech support
+
 def main():
     depend_zip('LibriTTS pre-trained model', PRETRAINED_MODEL_PATH, MODEL_URL)
     depend_zip('Punkt tokenizer', PUNKT_PATH, PUNKT_URL, TOKENIZERS_PATH)
@@ -241,8 +243,8 @@ def main():
                 duration = len(audio) / model_config['preprocess_params']['sr']
                 filename = re.sub(r'\W', '', text)[:20]
                 filepath = write_audio(audio, filename)
-                print(f"[green]Synthesized {filepath}![/green]")
+                print(f"[green]Synthesized {filepath}[/green]")
                 print(f"Wrote {duration:2f}s of data in {processing_time:2f}s (Ctrl+P to play)")
 
 if __name__ == "__main__":
-    typer.run(main)
+    main()

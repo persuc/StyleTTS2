@@ -16,7 +16,6 @@ einops-exts
 tqdm
 typing
 typing-extensions
-typer
 rich
 prompt_toolkit
 pyaudio

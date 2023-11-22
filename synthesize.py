@@ -204,14 +204,16 @@ def main():
 
     state = State.CHOOSE_REFERENCE
     style_cache: typing.Dict[str, Tensor] = {}
-    reference_file = None
+    reference_file = ''
+    reference_label = ''
     filepath = ''
     while state != State.DONE:
         if state == State.CHOOSE_REFERENCE:
-            reference_file = choose_reference()
-            if reference_file is None:
+            reference = choose_reference()
+            if reference is None:
                 state = State.DONE
             else:
+                reference_file, reference_label = reference
                 print('Enter text for synthesis (Ctrl+C to go back)')
                 state = State.SYNTHESIZE
         elif state == State.SYNTHESIZE:
@@ -227,14 +229,13 @@ def main():
                 " Play the most recently synthesized sound when `c-p` is pressed. "
                 play_audio(filepath)
 
-            print(f"[deep_sky_blue1]({reference_file})[/deep_sky_blue1] ", end="")
+            print(f"[deep_sky_blue1]({reference_label})[/deep_sky_blue1] ", end="")
             text = prompt_toolkit.prompt("> ", key_bindings=bindings, cursor=CursorShape.UNDERLINE)
             if text is None:
                 state = State.CHOOSE_REFERENCE
             elif len(text) > model_config['model_params']['max_conv_dim']:
                 print(f"[red]Sorry, StyleTTS2 is limited to {model_config['model_params']['max_conv_dim']} characters.[/red] Please shorten your input and try again.")
             else:
-                reference_file = typing.cast(str, reference_file)
                 start = time.time()
                 if reference_file not in style_cache:
                     style_cache[reference_file] = compute_style(REFERENCE_PATH + reference_file)
